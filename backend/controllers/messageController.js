@@ -5,58 +5,77 @@ import { v2 as cloudinary } from "cloudinary";
 
 async function sendMessage(req, res) {
 	try {
-		const { recipientId, message } = req.body;
-		let { img } = req.body;
-		const senderId = req.user._id;
-
-		let conversation = await Conversation.findOne({
-			participants: { $all: [senderId, recipientId] },
-		});
-
-		if (!conversation) {
-			conversation = new Conversation({
-				participants: [senderId, recipientId],
-				lastMessage: {
-					text: message,
-					sender: senderId,
-				},
-			});
-			await conversation.save();
-		}
-
-		if (img) {
-			const uploadedResponse = await cloudinary.uploader.upload(img);
-			img = uploadedResponse.secure_url;
-		}
-
-		const newMessage = new Message({
-			conversationId: conversation._id,
-			sender: senderId,
+	  const { recipientId, message, audio, video } = req.body;
+	  let { img } = req.body;
+	  const senderId = req.user._id;
+  
+	  let conversation = await Conversation.findOne({
+		participants: { $all: [senderId, recipientId] },
+	  });
+  
+	  if (!conversation) {
+		conversation = new Conversation({
+		  participants: [senderId, recipientId],
+		  lastMessage: {
 			text: message,
-			img: img || "",
+			sender: senderId,
+		  },
 		});
-
-		await Promise.all([
-			newMessage.save(),
-			conversation.updateOne({
-				lastMessage: {
-					text: message,
-					sender: senderId,
-				},
-			}),
-		]);
-
-		const recipientSocketId = getRecipientSocketId(recipientId);
-		if (recipientSocketId) {
-			io.to(recipientSocketId).emit("newMessage", newMessage);
-		}
-
-		res.status(201).json(newMessage);
+		await conversation.save();
+	  }
+  
+	  // Handle media uploads
+	  let uploadedImg, uploadedAudio, uploadedVideo;
+	  
+	  if (img) {
+		const uploadedResponse = await cloudinary.uploader.upload(img);
+		uploadedImg = uploadedResponse.secure_url;
+	  }
+  
+	  if (audio) {
+		const uploadedResponse = await cloudinary.uploader.upload(audio, {
+		  resource_type: "video" // Cloudinary uses video type for audio
+		});
+		uploadedAudio = uploadedResponse.secure_url;
+	  }
+  
+	  if (video) {
+		const uploadedResponse = await cloudinary.uploader.upload(video, {
+		  resource_type: "video"
+		});
+		uploadedVideo = uploadedResponse.secure_url;
+	  }
+  
+	  const newMessage = new Message({
+		conversationId: conversation._id,
+		sender: senderId,
+		text: message,
+		img: uploadedImg || "",
+		audio: uploadedAudio || "",
+		video: uploadedVideo || "",
+		type: video ? 'video' : (audio ? 'audio' : (img ? 'image' : 'text'))
+	  });
+  
+	  await Promise.all([
+		newMessage.save(),
+		conversation.updateOne({
+		  lastMessage: {
+			text: message || "Sent a media message",
+			sender: senderId,
+		  },
+		}),
+	  ]);
+  
+	  const recipientSocketId = getRecipientSocketId(recipientId);
+	  if (recipientSocketId) {
+		io.to(recipientSocketId).emit("newMessage", newMessage);
+	  }
+  
+	  res.status(201).json(newMessage);
 	} catch (error) {
-		res.status(500).json({ error: error.message });
+	  res.status(500).json({ error: error.message });
 	}
-}
-
+  }
 async function getMessages(req, res) {
 	const { otherUserId } = req.params;
 	const userId = req.user._id;
